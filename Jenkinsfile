@@ -1,10 +1,73 @@
+// pipeline {
+
+//     agent any
+
+//     environment {
+//         DOCKER_IMAGE = "${DOCKER_USERNAME}/flask-app"
+//         IMAGE_TAG    = "${GIT_COMMIT[0..7]}"   // Short git SHA for traceability
+//         NAMESPACE    = "jenkins-cicd"
+//     }
+
+//     stages {
+
+//         stage('Checkout') {
+//             steps {
+//                 checkout scm
+//             }
+//         }
+
+//         stage('Build Docker Image') {
+//             steps {
+//                 sh "docker build -t ${DOCKER_IMAGE}:${IMAGE_TAG} ."
+//                 sh "docker tag ${DOCKER_IMAGE}:${IMAGE_TAG} ${DOCKER_IMAGE}:latest"
+//             }
+//         }
+
+//         stage('Push Docker Image') {
+//             steps {
+//                 withCredentials([usernamePassword(
+//                     credentialsId: 'dockerhub-credentials',
+//                     usernameVariable: 'soum1104',
+//                     passwordVariable: 'Soum@1104'
+//                 )]) {
+//                     sh 'echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin'
+//                     sh "docker push ${DOCKER_IMAGE}:${IMAGE_TAG}"
+//                     sh "docker push ${DOCKER_IMAGE}:latest"
+//                 }
+//             }
+//         }
+
+//         stage('Deploy To Kubernetes') {
+//             steps {
+//                 sh "kubectl create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -"
+//                 sh "kubectl apply -f deployment.yaml -n ${NAMESPACE}"
+//                 sh "kubectl apply -f service.yaml -n ${NAMESPACE}"
+//                 sh "kubectl set image deployment/flask-app flask-app=${DOCKER_IMAGE}:${IMAGE_TAG} -n ${NAMESPACE}"
+//                 sh "kubectl rollout status deployment/flask-app -n ${NAMESPACE} --timeout=120s"
+//             }
+//         }
+//     }
+
+//     post {
+//         success {
+//             echo "✅ Pipeline succeeded — ${DOCKER_IMAGE}:${IMAGE_TAG} deployed to ${NAMESPACE}"
+//         }
+//         failure {
+//             echo "❌ Pipeline failed — check logs above"
+//             sh "kubectl rollout undo deployment/flask-app -n ${NAMESPACE} || true"
+//         }
+//         always {
+//             sh 'docker logout'
+//         }
+//     }
+// }
+
 pipeline {
 
     agent any
 
     environment {
-        DOCKER_IMAGE = "${DOCKER_USERNAME}/flask-app"
-        IMAGE_TAG    = "${GIT_COMMIT[0..7]}"   // Short git SHA for traceability
+        DOCKER_IMAGE = "soum1104/flask-app"
         NAMESPACE    = "jenkins-cicd"
     }
 
@@ -18,46 +81,65 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                sh "docker build -t ${DOCKER_IMAGE}:${IMAGE_TAG} ."
-                sh "docker tag ${DOCKER_IMAGE}:${IMAGE_TAG} ${DOCKER_IMAGE}:latest"
+                script {
+                    def imageTag = env.GIT_COMMIT.substring(0, 8)
+
+                    bat "docker build -t %DOCKER_IMAGE%:${imageTag} ."
+                    bat "docker tag %DOCKER_IMAGE%:${imageTag} %DOCKER_IMAGE%:latest"
+
+                    env.IMAGE_TAG = imageTag
+                }
             }
         }
 
         stage('Push Docker Image') {
             steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-credentials',
-                    usernameVariable: 'soum1104',
-                    passwordVariable: 'Soum@1104'
-                )]) {
-                    sh 'echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin'
-                    sh "docker push ${DOCKER_IMAGE}:${IMAGE_TAG}"
-                    sh "docker push ${DOCKER_IMAGE}:latest"
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-credentials',
+                        usernameVariable: 'soum1104',
+                        passwordVariable: 'Soum@1104'
+                    )
+                ]) {
+                    bat '''
+                        echo %DOCKER_PASSWORD% | docker login -u %DOCKER_USERNAME% --password-stdin
+                        docker push %DOCKER_IMAGE%:%IMAGE_TAG%
+                        docker push %DOCKER_IMAGE%:latest
+                    '''
                 }
             }
         }
 
         stage('Deploy To Kubernetes') {
             steps {
-                sh "kubectl create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -"
-                sh "kubectl apply -f deployment.yaml -n ${NAMESPACE}"
-                sh "kubectl apply -f service.yaml -n ${NAMESPACE}"
-                sh "kubectl set image deployment/flask-app flask-app=${DOCKER_IMAGE}:${IMAGE_TAG} -n ${NAMESPACE}"
-                sh "kubectl rollout status deployment/flask-app -n ${NAMESPACE} --timeout=120s"
+                bat '''
+                    kubectl create namespace %NAMESPACE% --dry-run=client -o yaml | kubectl apply -f -
+                    kubectl apply -f deployment.yaml -n %NAMESPACE%
+                    kubectl apply -f service.yaml -n %NAMESPACE%
+                    kubectl set image deployment/flask-app flask-app=%DOCKER_IMAGE%:%IMAGE_TAG% -n %NAMESPACE%
+                    kubectl rollout status deployment/flask-app -n %NAMESPACE% --timeout=120s
+                '''
             }
         }
     }
 
     post {
+
         success {
-            echo "✅ Pipeline succeeded — ${DOCKER_IMAGE}:${IMAGE_TAG} deployed to ${NAMESPACE}"
+            echo "Pipeline succeeded — ${env.DOCKER_IMAGE}:${env.IMAGE_TAG} deployed to ${env.NAMESPACE}"
         }
+
         failure {
-            echo "❌ Pipeline failed — check logs above"
-            sh "kubectl rollout undo deployment/flask-app -n ${NAMESPACE} || true"
+            echo "Pipeline failed — check logs above"
+
+            bat '''
+                kubectl rollout undo deployment/flask-app -n %NAMESPACE% 2>NUL || exit /b 0
+            '''
         }
+
         always {
-            sh 'docker logout'
+            bat 'docker logout'
         }
     }
 }
+
