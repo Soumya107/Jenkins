@@ -102,21 +102,23 @@ pipeline {
                     )
                 ]) {
                     bat '''
-                        echo ==============================
-                        echo Docker Username:
-                        echo [%DOCKER_USERNAME%]
+                        echo Username: %DOCKER_USERNAME%
 
-                        echo ==============================
-                        echo Password variable:
-                        if defined DOCKER_PASSWORD (
-                          echo PASSWORD IS SET
-                        ) else (
-                           echo PASSWORD IS NOT SET
+                        powershell -NoProfile -Command "$p=$env:DOCKER_PASSWORD; Write-Host ('Password length: ' + $p.Length)"
+
+                        docker logout
+
+                        echo %DOCKER_PASSWORD% | docker login -u %DOCKER_USERNAME% --password-stdin
+
+                        if errorlevel 1 (
+                          echo ==============================
+                          echo DOCKER LOGIN FAILED
+                          echo ==============================
+                          exit /b 1
                         )
 
                         echo ==============================
-                        echo Password length:
-                        powershell -NoProfile -Command "$p=$env:DOCKER_PASSWORD; if ($null -eq $p) { 'NULL' } else { $p.Length }"
+                        echo DOCKER LOGIN SUCCESS
                         echo ==============================
                         echo %DOCKER_PASSWORD% | docker login -u %DOCKER_USERNAME% --password-stdin
                         docker push %DOCKER_IMAGE%:%IMAGE_TAG%
