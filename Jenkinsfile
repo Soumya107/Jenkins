@@ -1,0 +1,63 @@
+pipeline {
+
+    agent any
+
+    environment {
+        DOCKER_IMAGE = "${DOCKER_USERNAME}/flask-app"
+        IMAGE_TAG    = "${GIT_COMMIT[0..7]}"   // Short git SHA for traceability
+        NAMESPACE    = "jenkins-cicd"
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                sh "docker build -t ${DOCKER_IMAGE}:${IMAGE_TAG} ."
+                sh "docker tag ${DOCKER_IMAGE}:${IMAGE_TAG} ${DOCKER_IMAGE}:latest"
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-credentials',
+                    usernameVariable: 'soum1104',
+                    passwordVariable: 'Soum@1104'
+                )]) {
+                    sh 'echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin'
+                    sh "docker push ${DOCKER_IMAGE}:${IMAGE_TAG}"
+                    sh "docker push ${DOCKER_IMAGE}:latest"
+                }
+            }
+        }
+
+        stage('Deploy To Kubernetes') {
+            steps {
+                sh "kubectl create namespace ${NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -"
+                sh "kubectl apply -f deployment.yaml -n ${NAMESPACE}"
+                sh "kubectl apply -f service.yaml -n ${NAMESPACE}"
+                sh "kubectl set image deployment/flask-app flask-app=${DOCKER_IMAGE}:${IMAGE_TAG} -n ${NAMESPACE}"
+                sh "kubectl rollout status deployment/flask-app -n ${NAMESPACE} --timeout=120s"
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ Pipeline succeeded — ${DOCKER_IMAGE}:${IMAGE_TAG} deployed to ${NAMESPACE}"
+        }
+        failure {
+            echo "❌ Pipeline failed — check logs above"
+            sh "kubectl rollout undo deployment/flask-app -n ${NAMESPACE} || true"
+        }
+        always {
+            sh 'docker logout'
+        }
+    }
+}
